@@ -74,6 +74,8 @@ async function launchBrowser(proxy = null) {
     args,
     protocolTimeout: 180000 //change
   });
+
+  await delay(2500);
 }
 
 export const getDomFeatures = async (page, url, userAgent) => {
@@ -87,7 +89,7 @@ export const getDomFeatures = async (page, url, userAgent) => {
   };
 
   try {
-    if (!page.isClosed()) {
+    if (page && !page.isClosed()) {
       await page.setUserAgent(userAgent);
     }
   } catch (err) {
@@ -99,17 +101,8 @@ export const getDomFeatures = async (page, url, userAgent) => {
   await page.setJavaScriptEnabled(true);
 
   await delay(500);
-  // await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-  try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  } catch (_) {
-    try {
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-    } catch (e) {
-      throw new Error(`Navigation failed (fallback too): ${e.message}`);
-    }
-}
 
   function shannonEntropy(str) {
   const map = {};
@@ -213,6 +206,7 @@ async function checkWhoisComplete(url) {
     const registrar = String(result.registrar || "").trim();
     return registrar.length > 1 ? 1 : 0;
   } catch (err) {
+    console.error(`🚫 WHOIS failed for ${url}:`, err.message || err);
      return -1;
   }
 }
@@ -306,12 +300,11 @@ export const scanUrls = async (urls, concurrencyLimit = 20) => {
       let page;
       try {
         page = await pageLimit(() => browser.newPage());
-        await delay(5000);
+        await delay(2500);
         await setupRequestInterception(page);
 
         const features = await tryScan(page, url, sslBypass, userAgent);
         await delay(1000 + Math.random() * 500);
-        await page.close();
 
         return {
           features,
@@ -336,8 +329,9 @@ export const scanUrls = async (urls, concurrencyLimit = 20) => {
         // Re run the puppeteer if it suddenly closed
         if (err.message.includes('Protocol error: Connection closed.')) {
           console.warn(`🔁 Relaunching browser due to closed connection at ${url}`);
-          await delay(3000);
           await launchBrowser();
+          await delay(3000);
+
         }
 
         // Specifically if ERR_NETWORK_CHANGED encounter
@@ -379,8 +373,8 @@ export const scanUrls = async (urls, concurrencyLimit = 20) => {
       let page;
       try {
         page = await pageLimit(() => browser.newPage());
+        await delay(2500);
 
-        await delay(5000);
         await page.setRequestInterception(true);
         await setupRequestInterception(page);
 
@@ -424,7 +418,7 @@ export const scanUrls = async (urls, concurrencyLimit = 20) => {
             const scraperApiUrl = `http://api.scraperapi.com/?api_key=${SCRAPER_API_PROXY_PASS}&url=${encodeURIComponent(url)}`;
 
             page = await pageLimit(() => browser.newPage());
-            await delay(5000);
+            await delay(2500);
 
             await page.setRequestInterception(true);
             page.on('request', req => {
