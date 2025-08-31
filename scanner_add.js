@@ -11,13 +11,29 @@ import {
 import UserAgent from 'user-agents';
 import { URL } from 'url';
 import whois from "whois-json";
+import os from 'os';
+
 
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const stealth = StealthPlugin();
+stealth.enabledEvasions.delete("chrome.app");
+stealth.enabledEvasions.delete("chrome.csi");
+stealth.enabledEvasions.delete("chrome.loadTimes");
+stealth.enabledEvasions.delete("chrome.runtime");
+stealth.enabledEvasions.delete("iframe.contentWindow");
+stealth.enabledEvasions.delete("navigator.plugins");
+stealth.enabledEvasions.delete("navigator.permissions");
+stealth.enabledEvasions.delete("navigator.hardwareConcurrency");
+stealth.enabledEvasions.delete("navigator.languages");
+stealth.enabledEvasions.delete("media.codecs");
+stealth.enabledEvasions.delete("webgl.vendor");
+stealth.enabledEvasions.delete("window.outerdimensions");
+stealth.enabledEvasions.delete("sourceurl"); 
 puppeteer.use(stealth);
 
 const SCRAPER_API_PROXY_PASS = '90317b95504115f9b4dba053893976e4';
+
 
 let browser;
 async function launchBrowser(proxy = null) {
@@ -28,17 +44,25 @@ async function launchBrowser(proxy = null) {
   }
 
   const args = [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-accelerated-2d-canvas',
-    '--no-first-run',
-    '--no-zygote',
-    '--disable-gpu',
-    '--disable-infobars',
-    '--disable-web-security',
-    '--ignore-certificate-errors',
-    '--disable-features=IsolateOrigins,site-per-process'
+    // safety over speed
+    // `--user-data-dir=${path.join(os.tmpdir(), `pupp-${Date.now()}`)}`,
+    // '--no-sandbox',
+    // '--disable-setuid-sandbox',
+    // '--disable-dev-shm-usage',
+    // '--disable-accelerated-2d-canvas',
+    // '--no-first-run',
+    // '--no-zygote',
+    // '--disable-gpu',
+    // '--disable-infobars',
+    // '--disable-web-security',
+    // '--ignore-certificate-errors',
+    // '--disable-features=IsolateOrigins,site-per-process'
+
+    //speed over safety
+    `--user-data-dir=${path.join(os.tmpdir(), `pupp-${Date.now()}`)}`,
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
   ];
 
   if (proxy) {
@@ -189,7 +213,7 @@ async function checkWhoisComplete(url) {
     const registrar = String(result.registrar || "").trim();
     return registrar.length > 1 ? 1 : 0;
   } catch (err) {
-    return 0;
+     return -1;
   }
 }
 
@@ -199,7 +223,7 @@ async function checkHTTPsStatus(url) {
     const parsed = new URL(url);
     isHttps = parsed.protocol === "https:" ? 1 : 0;
   } catch {
-    isHttps = 0;
+    isHttps = -1;
   }
 
   return isHttps;
@@ -210,7 +234,7 @@ async function checkHTTPsStatus(url) {
 export async function setupRequestInterception(page) {
   const blockedExtensions = [
     '.zip', '.rar', '.pdf', '.exe', '.doc', '.xls',
-    '.msi', '.dmg', '.iso', '.7z', '.tar', '.gz', '.txt'
+    '.msi', '.dmg', '.iso', '.7z', '.tar', '.gz', '.txt', '.apk'
   ];
 
   await page.setRequestInterception(true);
@@ -237,7 +261,7 @@ async function tryScan(page, url, sslBypass, userAgent) {
   return await getDomFeatures(page, url, userAgent);
 }
 
-export const scanUrls = async (urls, concurrencyLimit = 25) => {
+export const scanUrls = async (urls, concurrencyLimit = 20) => {
   const pageLimit = pLimit(concurrencyLimit);
   const limit = pLimit(concurrencyLimit);
   const proxyLimit = pLimit(5);
@@ -256,15 +280,15 @@ export const scanUrls = async (urls, concurrencyLimit = 25) => {
     ];
 
     const proxyRetryErrors = [
-      'net::ERR_BLOCKED_BY_CLIENT',
-      'net::ERR_CONNECTION_REFUSED',
-      // 'net::ERR_CONNECTION_TIMED_OUT',
-      'ERR_SSL_VERSION_OR_CIPHER_MISMATCH',
-      'net::ERR_SSL_PROTOCOL_ERROR',
-      'net::ERR_SSL_UNRECOGNIZED_NAME_ALERT',
-      'net::ERR_HTTP2_PROTOCOL_ERROR',
-      'net::ERR_CONNECTION_RESET',
-      'ERR_NETWORK_CHANGED'
+      // 'net::ERR_BLOCKED_BY_CLIENT',
+      // 'net::ERR_CONNECTION_REFUSED',
+      // // 'net::ERR_CONNECTION_TIMED_OUT',
+      // 'ERR_SSL_VERSION_OR_CIPHER_MISMATCH',
+      // 'net::ERR_SSL_PROTOCOL_ERROR',
+      // 'net::ERR_SSL_UNRECOGNIZED_NAME_ALERT',
+      // 'net::ERR_HTTP2_PROTOCOL_ERROR',
+      // 'net::ERR_CONNECTION_RESET',
+      // 'ERR_NETWORK_CHANGED'
     ];
 
     let userAgent = new UserAgent().toString();
@@ -282,8 +306,7 @@ export const scanUrls = async (urls, concurrencyLimit = 25) => {
       let page;
       try {
         page = await pageLimit(() => browser.newPage());
-
-        await delay(2000);
+        await delay(5000);
         await setupRequestInterception(page);
 
         const features = await tryScan(page, url, sslBypass, userAgent);
@@ -357,7 +380,7 @@ export const scanUrls = async (urls, concurrencyLimit = 25) => {
       try {
         page = await pageLimit(() => browser.newPage());
 
-        await delay(2000);
+        await delay(5000);
         await page.setRequestInterception(true);
         await setupRequestInterception(page);
 
@@ -378,8 +401,9 @@ export const scanUrls = async (urls, concurrencyLimit = 25) => {
 
         if (err.message.includes('Protocol error: Connection closed.')) {
           console.warn(`🔁 Relaunching browser due to closed connection at ${url}`);
-          await delay(3000);
           await launchBrowser();
+          await delay(3000);
+
         }
 
         if (proxyRetryErrors.some(e => err.message.includes(e))) proxyNeeded = true;
@@ -400,6 +424,7 @@ export const scanUrls = async (urls, concurrencyLimit = 25) => {
             const scraperApiUrl = `http://api.scraperapi.com/?api_key=${SCRAPER_API_PROXY_PASS}&url=${encodeURIComponent(url)}`;
 
             page = await pageLimit(() => browser.newPage());
+            await delay(5000);
 
             await page.setRequestInterception(true);
             page.on('request', req => {
