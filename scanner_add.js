@@ -101,7 +101,7 @@ export const getDomFeatures = async (page, url, userAgent) => {
   await page.setJavaScriptEnabled(true);
 
   await delay(500);
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
 
 
   function shannonEntropy(str) {
@@ -199,17 +199,23 @@ export const getDomFeatures = async (page, url, userAgent) => {
 };
 
 async function checkWhoisComplete(url) {
-  try {
-    const parsed = new URL(url);
-    const result = await whois(parsed.hostname);
+  const parsed = new URL(url);
+  const domain = parsed.hostname;
 
+  try {
+    // Try native WHOIS lookup
+    const result = await whois(domain, { follow: 1, timeout: 10000 });
     const registrar = String(result.registrar || "").trim();
+
     return registrar.length > 1 ? 1 : 0;
+
   } catch (err) {
     console.error(`🚫 WHOIS failed for ${url}:`, err.message || err);
-     return -1;
+    return 0;
   }
+
 }
+
 
 async function checkHTTPsStatus(url) {
   let isHttps = 0;
@@ -255,7 +261,7 @@ async function tryScan(page, url, sslBypass, userAgent) {
   return await getDomFeatures(page, url, userAgent);
 }
 
-export const scanUrls = async (urls, concurrencyLimit = 20) => {
+export const scanUrls = async (urls, concurrencyLimit = 30) => {
   const pageLimit = pLimit(concurrencyLimit);
   const limit = pLimit(concurrencyLimit);
   const proxyLimit = pLimit(5);
@@ -265,12 +271,12 @@ export const scanUrls = async (urls, concurrencyLimit = 20) => {
   await launchBrowser();
 
   async function scanWithRetry(originalUrl) {
-    const baseUrl = originalUrl.replace('://www.', '://');
+    // const baseUrl = originalUrl.replace('://www.', '://');
     const versions = [
       { url: originalUrl, sslBypass: false },
-      { url: baseUrl, sslBypass: false },
+      // { url: baseUrl, sslBypass: false },
       { url: originalUrl, sslBypass: true },
-      { url: baseUrl, sslBypass: true }
+      // { url: baseUrl, sslBypass: true }
     ];
 
     const proxyRetryErrors = [
