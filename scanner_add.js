@@ -36,6 +36,7 @@ const SCRAPER_API_PROXY_PASS = '90317b95504115f9b4dba053893976e4';
 
 
 let browser;
+let relaunching = null;
 async function launchBrowser(proxy = null) {
   if (browser) {
     try {
@@ -78,6 +79,22 @@ async function launchBrowser(proxy = null) {
   await delay(2500);
 }
 
+// 🚀 Safe global relaunch (only one at a time)
+async function ensureBrowserRelaunched(proxy = null) {
+  if (relaunching) {
+    // someone else is already relaunching → wait for them
+    await relaunching;
+    return browser;
+  }
+  relaunching = (async () => {
+    console.warn("🔁 Relaunching browser (global)...");
+    await launchBrowser(proxy);
+    relaunching = null; // reset lock
+    return browser;
+  })();
+  return relaunching;
+}
+
 export const getDomFeatures = async (page, url, userAgent) => {
 
   const safeEval = async (fn, fallback) => {
@@ -101,8 +118,18 @@ export const getDomFeatures = async (page, url, userAgent) => {
   await page.setJavaScriptEnabled(true);
 
   await delay(500);
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
-
+  // await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+    await delay(1000);
+  } catch (_) {
+    try {
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 90000 });
+      await delay(1000);
+    } catch (e) {
+      throw new Error(`Navigation failed (fallback too): ${e.message}`);
+    }
+}
 
   function shannonEntropy(str) {
   const map = {};
@@ -198,23 +225,63 @@ export const getDomFeatures = async (page, url, userAgent) => {
   };
 };
 
-async function checkWhoisComplete(url) {
-  const parsed = new URL(url);
-  const domain = parsed.hostname;
+// async function checkWhoisComplete(url) {
+//   const parsed = new URL(url);
+//   const domain = parsed.hostname;
 
+//   try {
+//     // Try native WHOIS lookup
+//     const result = await whois(domain, { follow: 3, timeout: 20000 });
+//     const registrar = String(result.registrar || "").trim();
+
+//     return registrar.length > 1 ? 1 : 0;
+
+//   } catch (err) {
+//     console.error(`🚫 WHOIS failed for ${url}:`, err.message || err);
+//     return -1;
+//   }
+
+// }
+
+async function checkWhoisComplete(url) {
   try {
-    // Try native WHOIS lookup
-    const result = await whois(domain, { follow: 1, timeout: 10000 });
-    const registrar = String(result.registrar || "").trim();
+    const parsed = new URL(url);
+    const domain = parsed.hostname.replace(/^www\./, "");
+
+    async function safeWhois(domain, retries = 2) {
+      for (let i = 0; i < retries; i++) {
+        try {
+          return await whois(domain, { follow: 1, timeout: 20000 });
+        } catch (err) {
+          // Retry only if it's a network/DNS issue
+          if (
+            i < retries - 1 &&
+            (err.code === "ECONNRESET" || err.code === "ENOTFOUND" || err.code === "EAI_AGAIN")
+          ) {
+            console.warn(`⚠️ WHOIS retry ${i + 1} for ${domain}: ${err.message}`);
+            await delay(2000);
+            continue;
+          }
+          throw err; // rethrow if not retryable or last attempt
+        }
+      }
+    }
+
+    const result = await safeWhois(domain);
+    const registrar = String(result?.registrar || "").trim();
 
     return registrar.length > 1 ? 1 : 0;
 
   } catch (err) {
+    if (err.code === "ENOTFOUND") {
+      console.warn(`🌐 WHOIS server not found for ${url} — likely unsupported TLD or DNS issue.`);
+      return 0; // treat as incomplete
+    }
     console.error(`🚫 WHOIS failed for ${url}:`, err.message || err);
     return 0;
   }
-
 }
+
 
 
 async function checkHTTPsStatus(url) {
@@ -234,7 +301,8 @@ async function checkHTTPsStatus(url) {
 export async function setupRequestInterception(page) {
   const blockedExtensions = [
     '.zip', '.rar', '.pdf', '.exe', '.doc', '.xls',
-    '.msi', '.dmg', '.iso', '.7z', '.tar', '.gz', '.txt', '.apk'
+    '.msi', '.dmg', '.iso', '.7z', '.tar', '.gz', '.txt', '.apk',
+    '.rss', 'AppImage', '.mp3'
   ];
 
   await page.setRequestInterception(true);
@@ -254,6 +322,9 @@ export async function setupRequestInterception(page) {
   })};
 
 async function tryScan(page, url, sslBypass, userAgent) {
+  if (!page || page.isClosed()) {
+    throw new Error("Page was closed before scan could start");
+  }
   const client = await page.target().createCDPSession();
   if (sslBypass && url.startsWith('https://')) {
     await client.send('Security.setIgnoreCertificateErrors', { ignore: true });
@@ -335,7 +406,7 @@ export const scanUrls = async (urls, concurrencyLimit = 30) => {
         // Re run the puppeteer if it suddenly closed
         if (err.message.includes('Protocol error: Connection closed.')) {
           console.warn(`🔁 Relaunching browser due to closed connection at ${url}`);
-          await launchBrowser();
+          await ensureBrowserRelaunched();
           await delay(3000);
 
         }
@@ -401,7 +472,7 @@ export const scanUrls = async (urls, concurrencyLimit = 30) => {
 
         if (err.message.includes('Protocol error: Connection closed.')) {
           console.warn(`🔁 Relaunching browser due to closed connection at ${url}`);
-          await launchBrowser();
+          await ensureBrowserRelaunched();
           await delay(3000);
 
         }
